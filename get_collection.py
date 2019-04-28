@@ -16,18 +16,30 @@ def get_collection(username):
     except BGGItemNotFoundError:
         print("user {} doesn't appear to exist".format(username))
         return json.dumps([])
-    global_stats = [game.data() for game in bgg.game_list(game_id_list=[stats.id for stats in personal_stats])]
+
+    # split into chunks to avoid 414 URL too long error
+    CHUNK_SIZE = 300
+
+    chunks = []
+    while len(personal_stats) > 0:
+        new_chunk = []
+        while (len(new_chunk) < CHUNK_SIZE) and (len(personal_stats) > 0):
+            new_chunk.append(personal_stats.pop(0))
+        chunks.append(new_chunk)
+
     collection = []
-    for game in global_stats:
-        # remove all games which are not "standalone"
-        if game["expands"]:
-            continue
-        game_dict = game
-        for my_game in personal_stats:
-            if (my_game.id == game["id"]):
-                game_dict["my_rating"] = my_game.rating
-                break
-        collection.append(game_dict)
+    for chunk in chunks:
+        global_stats = [game.data() for game in bgg.game_list(game_id_list=[stats.id for stats in chunk])]
+        for game in global_stats:
+            # remove all games which are not "standalone"
+            if game["expands"]:
+                continue
+            game_dict = game
+            for my_game in personal_stats:
+                if (my_game.id == game["id"]):
+                    game_dict["my_rating"] = my_game.rating
+                    break
+            collection.append(game_dict)
 
     print("user {} has {} games owned".format(username, len(collection)))
     return json.dumps(collection)
