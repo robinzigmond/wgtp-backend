@@ -1,0 +1,1 @@
+This is a very simple backend for my [which-game-to-play](https://github.com/robinzigmond/which-game-to-play) app. It consists of a very simple wrapper for the parts of the Boardgamegeek API that I need (responding with JSON rather than the original XML), using Flask and the [Python interface](https://github.com/lcosmin/boardgamegeek) for the BGG API.
