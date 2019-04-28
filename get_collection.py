@@ -3,14 +3,40 @@ from flask import Flask
 from flask_cors import CORS
 from boardgamegeek import BGGClient
 from boardgamegeek.exceptions import BGGItemNotFoundError
+from rq import Queue
+from rq.job import Job
+from worker import conn
+
+q = Queue(connection=conn)
 
 app = Flask(__name__)
 CORS(app)
 
 bgg = BGGClient(requests_per_minute=10)
 
+@app.route("/result/<job_id>")
+def get_result(job_id):
+    job = Job.fetch(job_id, connection=conn)
+    print("status: {}".format(job.get_status()))
+    if job.get_status() == "failed":
+        return json.dumps({"done": False, "failed": True})
+    res = job.result
+    if res:
+        return json.dumps({"done": True, "result": json.loads(res)})
+    else:
+        return json.dumps({"done": False})
+
 @app.route("/collection/<username>")
 def get_collection(username):
+    job = q.enqueue(queue_get_collection, username, job_timeout=300)
+    return json.dumps({"job_id": job.id})
+
+@app.route("/check_ratings/<username>/<game_list>")
+def check_rating(username, game_list):
+    job = q.enqueue(queue_check_rating, username, game_list, job_timeout=300)
+    return json.dumps({"job_id": job.id})
+
+def queue_get_collection(username):
     try:
         personal_stats = bgg.collection(username, own=True).items
     except BGGItemNotFoundError:
@@ -18,7 +44,7 @@ def get_collection(username):
         return json.dumps([])
 
     # split into chunks to avoid 414 URL too long error
-    CHUNK_SIZE = 300
+    CHUNK_SIZE = 200
 
     chunks = []
     while len(personal_stats) > 0:
@@ -29,23 +55,14 @@ def get_collection(username):
 
     collection = []
     for chunk in chunks:
-        global_stats = [game.data() for game in bgg.game_list(game_id_list=[stats.id for stats in chunk])]
-        for game in global_stats:
-            # remove all games which are not "standalone"
-            if game["expands"]:
-                continue
-            game_dict = game
-            for my_game in personal_stats:
-                if (my_game.id == game["id"]):
-                    game_dict["my_rating"] = my_game.rating
-                    break
-            collection.append(game_dict)
+        # get all games which are not expansions
+        collection.extend([game.data() for game in bgg.game_list(game_id_list=[stats.id for stats in chunk])
+                            if not game.data()["expands"]])
 
     print("user {} has {} games owned".format(username, len(collection)))
     return json.dumps(collection)
 
-@app.route("/check_ratings/<username>/<game_list>")
-def check_rating(username, game_list):
+def queue_check_rating(username, game_list):
     try:
         games_in_collection = bgg.collection(username, rated=True).items
     except BGGItemNotFoundError:
